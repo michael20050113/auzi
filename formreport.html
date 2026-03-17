@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>即時報修系統</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #eef2f5;
+      padding: 40px;
+    }
+    .container {
+      background: white;
+      padding: 20px 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      max-width: 520px;
+      margin: auto;
+    }
+    h2, h3 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    input, textarea, button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      margin-bottom: 15px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 16px;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s;
+      font-weight: 600;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    .report {
+      background: #f9f9f9;
+      border-left: 5px solid #007bff;
+      padding: 12px 15px;
+      margin-bottom: 12px;
+      border-radius: 5px;
+      word-wrap: break-word;
+    }
+    .error {
+      color: red;
+      margin-top: 5px;
+      font-weight: 600;
+    }
+    code {
+      background: #eaeaea;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 90%;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>報修表單</h2>
+    <input type="text" id="device" placeholder="設備名稱 (必填)">
+    <textarea id="message" rows="4" placeholder="報修內容 (必填)"></textarea>
+    <button id="submitBtn" onclick="submitReport()">送出報修</button>
+
+    <h3>案件查詢</h3>
+    <input type="text" id="search_id" placeholder="輸入案件編號 (例如 R20250716-0001)">
+    <button onclick="searchReport()">查詢案件</button>
+    <div id="search_result"></div>
+
+    <h3>所有報修紀錄</h3>
+    <div id="reports"></div>
+  </div>
+
+  <script>
+    let editingCaseId = null;
+
+    async function submitReport() {
+      const device = document.getElementById('device').value.trim();
+      const message = document.getElementById('message').value.trim();
+      const btn = document.getElementById('submitBtn');
+
+      if (!device || !message) {
+        alert("請填寫設備名稱與報修內容！");
+        return;
+      }
+
+      if (editingCaseId) {
+        const res = await fetch(`http://localhost:5002/report/${editingCaseId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device, message })
+        });
+
+        if (!res.ok) {
+          alert("更新失敗！");
+          return;
+        }
+
+        alert("✅ 報修單已更新！");
+        editingCaseId = null;
+        btn.textContent = '送出報修';
+      } else {
+        const res = await fetch('http://localhost:5002/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device, message })
+        });
+
+        const result = await res.json();
+        alert("報修成功！案件編號：" + result.report.case_id);
+      }
+
+      document.getElementById('device').value = '';
+      document.getElementById('message').value = '';
+      loadReports();
+    }
+
+    async function loadReports() {
+      const res = await fetch('http://localhost:5002/reports');
+      const data = await res.json();
+      const reportsDiv = document.getElementById('reports');
+      if (data.length === 0) {
+        reportsDiv.innerHTML = "<p>目前無報修紀錄。</p>";
+        return;
+      }
+      reportsDiv.innerHTML = data.map(r => `
+        <div class="report" id="report-${r.case_id}">
+          <strong>設備：</strong><span class="device-text">${r.device}</span><br/>
+          <strong>內容：</strong><span class="message-text">${r.message}</span><br/>
+          <strong>案件編號：</strong><code>${r.case_id}</code><br/>
+          <strong>時間：</strong>${r.timestamp}<br/>
+          <button onclick="startEdit('${r.case_id}')">編輯</button>
+          <button onclick="deleteReport('${r.case_id}')">刪除</button>
+        </div>
+      `).join('');
+    }
+
+    async function searchReport() {
+      const id = document.getElementById('search_id').value.trim();
+      const resultDiv = document.getElementById('search_result');
+      if (!id) return;
+
+      const res = await fetch(`http://localhost:5002/report/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        resultDiv.innerHTML = `
+          <div class="report">
+            <strong>設備：</strong>${data.device}<br/>
+            <strong>內容：</strong>${data.message}<br/>
+            <strong>案件編號：</strong><code>${data.case_id}</code><br/>
+            <strong>時間：</strong>${data.timestamp}
+          </div>
+        `;
+      } else {
+        resultDiv.innerHTML = `<div class="error">❌ 找不到此案件編號</div>`;
+      }
+    }
+
+    function startEdit(caseId) {
+      const reportDiv = document.getElementById(`report-${caseId}`);
+      const deviceText = reportDiv.querySelector('.device-text').textContent;
+      const messageText = reportDiv.querySelector('.message-text').textContent;
+
+      document.getElementById('device').value = deviceText;
+      document.getElementById('message').value = messageText;
+      editingCaseId = caseId;
+
+      const btn = document.getElementById('submitBtn');
+      btn.textContent = '更新報修';
+    }
+
+    async function deleteReport(caseId) {
+      if (!confirm(`確定要刪除案件 ${caseId}？`)) return;
+      const res = await fetch(`http://localhost:5002/report/${caseId}`, {
+        method: 'DELETE'
+      });
+      alert("已刪除報修單");
+      loadReports();
+    }
+
+    // 初始化
+    loadReports();
+  </script>
+</body>
+</html>
